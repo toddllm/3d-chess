@@ -67,6 +67,7 @@ class Chess3DApp {
   private puzzleGoalSpan: HTMLSpanElement | null = null;
   private puzzleNextBtn: HTMLButtonElement | null = null;
   private puzzleResetBtn: HTMLButtonElement | null = null;
+  private puzzleAutoNextCheckbox: HTMLInputElement | null = null;
   private activePuzzleIndex: number = 0;
   private puzzleSolverColor: PieceColor = 'w';
   private puzzleGoalMoves: number = 0;
@@ -895,6 +896,7 @@ class Chess3DApp {
     this.puzzleGoalSpan = document.getElementById('puzzleGoal') as HTMLSpanElement | null;
     this.puzzleNextBtn = document.getElementById('puzzleNextBtn') as HTMLButtonElement | null;
     this.puzzleResetBtn = document.getElementById('puzzleResetBtn') as HTMLButtonElement | null;
+    this.puzzleAutoNextCheckbox = document.getElementById('puzzleAutoNext') as HTMLInputElement | null;
     if (!this.puzzleSelect || !this.puzzleBar) return;
     this.puzzleSelect.innerHTML = '';
     PUZZLES.forEach((p, idx) => {
@@ -976,6 +978,15 @@ class Chess3DApp {
       if (deliveredBySolver && this.puzzleSolverMovesUsed <= this.puzzleGoalMoves) {
         this.puzzleSolved = true;
         this.flashStatus('Puzzle solved!');
+        if (this.puzzleAutoNextCheckbox?.checked) {
+          setTimeout(() => {
+            const next = (this.activePuzzleIndex + 1) % PUZZLES.length;
+            this.activePuzzleIndex = next;
+            if (this.puzzleSelect) this.puzzleSelect.value = String(next);
+            this.loadPuzzle(next);
+            this.updateUrlParams({ puzzle: String(next) });
+          }, 600);
+        }
       } else {
         this.puzzleFailed = true;
         this.flashStatus('Puzzle failed');
