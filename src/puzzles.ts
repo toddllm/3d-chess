@@ -30,4 +30,25 @@ export const PUZZLES: Puzzle[] = [
     sideToMove: 'w',
     goal: { type: 'mate-in', moves: 2 },
   },
+  {
+    id: 'mate-in-1-smothered',
+    name: 'Mate in 1 (Smothered theme)',
+    fen: '5rk1/5ppp/8/8/8/8/5PPP/5R1K w - - 0 1',
+    sideToMove: 'w',
+    goal: { type: 'mate-in', moves: 1 },
+  },
+  {
+    id: 'mate-in-2-corner',
+    name: 'Mate in 2 (Corner trap)',
+    fen: '6k1/6pp/8/8/8/5Q2/6PP/6K1 w - - 0 1',
+    sideToMove: 'w',
+    goal: { type: 'mate-in', moves: 2 },
+  },
+  {
+    id: 'mate-in-2-bridge',
+    name: 'Mate in 2 (Bridge)',
+    fen: '8/8/8/6k1/8/8/5QK1/6R1 w - - 0 1',
+    sideToMove: 'w',
+    goal: { type: 'mate-in', moves: 2 },
+  },
 ];

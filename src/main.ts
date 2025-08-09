@@ -3,8 +3,14 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { Chess, Move } from 'chess.js';
 import { createBoard, squareToPosition, positionToSquare, BoardSquare, SQUARE_SIZE } from './board';
 import { createPieceMesh, PieceColor, PieceType } from './pieces';
-import { ModeManager, MODES, ModeId, getPortalSquares } from './modes';
+import { ModeManager, MODES, ModeId, getPortalSquares, consumeLastTeleport } from './modes';
 import { PUZZLES } from './puzzles';
+import { TextGeometry } from 'three/examples/jsm/geometries/TextGeometry.js';
+import { Font } from 'three/examples/jsm/loaders/FontLoader.js';
+// Vite supports importing JSON; three Font constructor accepts JSON data
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore
+import helvetikerFontData from 'three/examples/fonts/helvetiker_regular.typeface.json';
 
 // BufferGeometryUtils is imported within pieces.ts for merges
 
@@ -82,6 +88,7 @@ class Chess3DApp {
   private markerMatQuiet: THREE.MeshBasicMaterial | null = null;
   private markerMatCapture: THREE.MeshBasicMaterial | null = null;
   private portalMarkers: THREE.Mesh[] = [];
+  private coordLabelsGroup: THREE.Group | null = null;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -160,6 +167,7 @@ class Chess3DApp {
     // Indicators
     this.createIndicators();
     this.updatePortalMarkers();
+    this.addCoordinateLabels();
 
     // Event listeners
     window.addEventListener('resize', this.onResize);
@@ -495,6 +503,14 @@ class Chess3DApp {
         }
       }
     }
+    // Portal teleport visual if occurred
+    const tp = consumeLastTeleport(this.modeManager);
+    if (tp) {
+      const mesh = this.squareToPiece.get(tp.to);
+      if (mesh) {
+        await this.animateTeleport(mesh as PieceMesh, tp);
+      }
+    }
   }
 
   private getCastlingRookMove(move: Move): { from: string; to: string } | null {
@@ -563,6 +579,35 @@ class Chess3DApp {
         mesh.scale.setScalar(1 - t);
         mesh.position.y = fromY + t * 0.5;
         if (t < 1) requestAnimationFrame(tick); else resolve();
+      };
+      requestAnimationFrame(tick);
+    });
+  }
+
+  private animateTeleport(mesh: PieceMesh, tp: { from: string; to: string }): Promise<void> {
+    // Brief scale pulse and fade trail
+    const start = performance.now();
+    const duration = 220;
+    const fromPos = squareToPosition(tp.from);
+    const toPos = squareToPosition(tp.to);
+    const trailGeom = new THREE.RingGeometry(0.15, 0.25, 24);
+    const trailMat = new THREE.MeshBasicMaterial({ color: 0x8a2be2, transparent: true, opacity: 0.8, side: THREE.DoubleSide, depthTest: false, depthWrite: false });
+    const trail = new THREE.Mesh(trailGeom, trailMat);
+    trail.rotation.x = -Math.PI / 2;
+    trail.position.set(fromPos.x, 0.03, fromPos.z);
+    this.boardGroup.add(trail);
+    return new Promise((resolve) => {
+      const tick = () => {
+        const t = Math.min(1, (performance.now() - start) / duration);
+        const s = 1 + Math.sin(t * Math.PI) * 0.25;
+        mesh.scale.setScalar(s);
+        trail.scale.setScalar(1 + t * 2);
+        (trail.material as THREE.MeshBasicMaterial).opacity = 0.8 * (1 - t);
+        if (t < 1) requestAnimationFrame(tick); else {
+          mesh.scale.setScalar(1);
+          this.boardGroup.remove(trail);
+          resolve();
+        }
       };
       requestAnimationFrame(tick);
     });
@@ -929,6 +974,43 @@ class Chess3DApp {
     if (!this.puzzleGoalSpan) return;
     const status = this.puzzleSolved ? ' — Solved!' : this.puzzleFailed ? ' — Failed' : '';
     this.puzzleGoalSpan.textContent = `Mate in ${this.puzzleGoalMoves} • Used ${this.puzzleSolverMovesUsed}/${this.puzzleGoalMoves}${status}`;
+  }
+
+  private addCoordinateLabels() {
+    if (this.coordLabelsGroup) {
+      this.scene.remove(this.coordLabelsGroup);
+      this.coordLabelsGroup = null;
+    }
+    const group = new THREE.Group();
+    const font = new Font(helvetikerFontData);
+    const mat = new THREE.MeshBasicMaterial({ color: 0xb0b0b0, transparent: true, opacity: 0.85, depthTest: true });
+    const size = 0.18;
+    const bevel = false;
+    const depth = 0.005;
+    const files = 'abcdefgh';
+    const offset = (SQUARE_SIZE * (8 - 1)) / 2 + SQUARE_SIZE * 0.62;
+    for (let i = 0; i < 8; i++) {
+      // files a..h on white’s side (negative Z)
+      const fileChar = files[i];
+      const geo = new TextGeometry(fileChar, { font, size, depth, bevelEnabled: bevel });
+      const mesh = new THREE.Mesh(geo, mat);
+      const x = (i - (8 - 1) / 2) * SQUARE_SIZE;
+      mesh.position.set(x - size * 0.15, 0.02, -offset);
+      mesh.rotation.x = -Math.PI / 2;
+      group.add(mesh);
+    }
+    for (let r = 0; r < 8; r++) {
+      const label = String(r + 1);
+      const geo = new TextGeometry(label, { font, size, depth, bevelEnabled: bevel });
+      const mesh = new THREE.Mesh(geo, mat);
+      const z = (r - (8 - 1) / 2) * SQUARE_SIZE;
+      mesh.position.set(-offset, 0.02, z + size * 0.15);
+      mesh.rotation.x = -Math.PI / 2;
+      group.add(mesh);
+    }
+    group.renderOrder = 2;
+    this.scene.add(group);
+    this.coordLabelsGroup = group;
   }
 }
 

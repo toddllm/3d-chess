@@ -113,11 +113,15 @@ export class ModeManager {
           let dest: string | null = null;
           if (landed === a) dest = b; else if (landed === b) dest = a;
           if (dest) {
-            // Only allow teleport if dest is empty.
-            if (!c.get(dest as any)) {
+            // Only allow teleport if dest is empty and piece is not a king.
+            const pieceAt = c.get(landed as any);
+            const isKing = pieceAt && (pieceAt as any).type === 'k';
+            if (!isKing && !c.get(dest as any)) {
               const piece = c.remove(applied.to as any);
               if (piece) {
                 c.put(piece, dest as any);
+                // record last teleport so UI can animate
+                (this as any)._lastTeleport = { from: applied.to, to: dest };
               }
             }
           }
@@ -158,4 +162,11 @@ export function getPortalSquares(manager: ModeManager): PortalPair {
   // @ts-ignore - access private via any to expose
   const portals = (manager as any).portals as PortalPair;
   return portals ?? null;
+}
+
+export function consumeLastTeleport(manager: ModeManager): { from: string; to: string } | null {
+  const anyMgr: any = manager as any;
+  const tp = anyMgr._lastTeleport ?? null;
+  anyMgr._lastTeleport = null;
+  return tp;
 }
