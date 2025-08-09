@@ -3,6 +3,8 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { Chess, Move } from 'chess.js';
 import { createBoard, squareToPosition, positionToSquare, BoardSquare, SQUARE_SIZE } from './board';
 import { createPieceMesh, PieceColor, PieceType } from './pieces';
+import { ModeManager, MODES, ModeId, getPortalSquares } from './modes';
+import { PUZZLES } from './puzzles';
 
 // BufferGeometryUtils is imported within pieces.ts for merges
 
@@ -50,6 +52,21 @@ class Chess3DApp {
   private lanLinkInput: HTMLInputElement;
   private copyLanLinkBtn: HTMLButtonElement;
   private serverUrlInput: HTMLInputElement;
+
+  // Modes
+  private modeManager: ModeManager;
+  private modeSelect: HTMLSelectElement | null = null;
+  private puzzleBar: HTMLElement | null = null;
+  private puzzleSelect: HTMLSelectElement | null = null;
+  private puzzleGoalSpan: HTMLSpanElement | null = null;
+  private puzzleNextBtn: HTMLButtonElement | null = null;
+  private puzzleResetBtn: HTMLButtonElement | null = null;
+  private activePuzzleIndex: number = 0;
+  private puzzleSolverColor: PieceColor = 'w';
+  private puzzleGoalMoves: number = 0;
+  private puzzleSolverMovesUsed: number = 0;
+  private puzzleSolved = false;
+  private puzzleFailed = false;
   // Networking / mode
   private isLanMode = false;
   private myColor: PieceColor = 'w';
@@ -64,6 +81,7 @@ class Chess3DApp {
   private markerGeometry: THREE.CylinderGeometry | null = null;
   private markerMatQuiet: THREE.MeshBasicMaterial | null = null;
   private markerMatCapture: THREE.MeshBasicMaterial | null = null;
+  private portalMarkers: THREE.Mesh[] = [];
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -133,8 +151,15 @@ class Chess3DApp {
     // Pieces
     this.buildAllPiecesFromGameState();
 
+    // Modes
+    this.modeManager = new ModeManager(this.chess);
+    this.injectModeUI();
+    this.modeManager.init('classic');
+    this.injectPuzzleUI();
+
     // Indicators
     this.createIndicators();
+    this.updatePortalMarkers();
 
     // Event listeners
     window.addEventListener('resize', this.onResize);
@@ -187,6 +212,7 @@ class Chess3DApp {
     this.selectedSquare = null;
     this.clearHighlights();
     this.buildAllPiecesFromGameState();
+    this.modeManager.onReset();
     this.controlsTargetByTurn();
     this.updateStatus();
   }
@@ -241,6 +267,9 @@ class Chess3DApp {
 
     // Ensure pointer coords are up-to-date on click
     this.updatePointerFromEvent(event);
+
+    // In puzzle mode, block further moves after solved/failed
+    if (this.modeManager.currentMode === 'puzzles' && (this.puzzleSolved || this.puzzleFailed)) return;
 
     const clickedSquare = this.pickSquareUnderPointer();
     if (!clickedSquare) return;
@@ -317,6 +346,9 @@ class Chess3DApp {
       this.boardGroup.remove(m);
     }
     this.legalMoveMarkers = [];
+    // Remove portal markers
+    for (const m of this.portalMarkers) this.boardGroup.remove(m);
+    this.portalMarkers = [];
   }
 
   private highlightLegalMoves(from: string) {
@@ -371,6 +403,7 @@ class Chess3DApp {
         }
       }
 
+      this.modeManager.beforeMove({ from, to, promotion });
       const move = this.chess.move({ from, to, promotion });
       if (!move) {
         // Illegal move
@@ -379,6 +412,9 @@ class Chess3DApp {
       }
 
       await this.syncMeshesWithMove(move as Move);
+      this.modeManager.afterAppliedMove(move as Move);
+      this.updatePortalMarkers();
+      this.checkPuzzleProgress(move as Move);
       this.afterMoveUpdate();
 
       // Broadcast move in LAN mode
@@ -569,6 +605,8 @@ class Chess3DApp {
     else if (this.chess.inCheck()) msg = `${turn} is in check`;
     if (this.hoveredSquare) msg += `  •  Hover: ${this.hoveredSquare}`;
     if (this.isLanMode) msg += `  •  LAN (${this.myColor === 'w' ? 'White' : 'Black'})`;
+    const extra = this.modeManager.getStatusExtra();
+    if (extra) msg += `  •  ${extra}`;
     this.statusEl.textContent = msg;
   }
 
@@ -758,6 +796,139 @@ class Chess3DApp {
   private isCaptureMoveVerbose(m: Move): boolean {
     const flags = (m.flags as string) || '';
     return Boolean((m as any).captured) || flags.includes('c') || flags.includes('e');
+  }
+
+  private injectModeUI() {
+    this.modeSelect = document.getElementById('modeSelect') as HTMLSelectElement | null;
+    if (!this.modeSelect) return;
+    this.modeSelect.innerHTML = '';
+    for (const m of MODES) {
+      const opt = document.createElement('option');
+      opt.value = m.id;
+      opt.textContent = m.name;
+      this.modeSelect.appendChild(opt);
+    }
+    this.modeSelect.value = 'classic';
+    this.modeSelect.addEventListener('change', () => {
+      const id = this.modeSelect!.value as ModeId;
+      this.modeManager.init(id);
+      this.resetGame();
+      // Toggle puzzle bar visibility
+      if (id === 'puzzles') {
+        this.puzzleBar?.classList.remove('hidden');
+        this.loadPuzzle(this.activePuzzleIndex);
+      } else {
+        this.puzzleBar?.classList.add('hidden');
+      }
+      this.updatePortalMarkers();
+    });
+  }
+
+  private injectPuzzleUI() {
+    this.puzzleBar = document.getElementById('puzzleBar');
+    this.puzzleSelect = document.getElementById('puzzleSelect') as HTMLSelectElement | null;
+    this.puzzleGoalSpan = document.getElementById('puzzleGoal') as HTMLSpanElement | null;
+    this.puzzleNextBtn = document.getElementById('puzzleNextBtn') as HTMLButtonElement | null;
+    this.puzzleResetBtn = document.getElementById('puzzleResetBtn') as HTMLButtonElement | null;
+    if (!this.puzzleSelect || !this.puzzleBar) return;
+    this.puzzleSelect.innerHTML = '';
+    PUZZLES.forEach((p, idx) => {
+      const opt = document.createElement('option');
+      opt.value = String(idx);
+      opt.textContent = `${p.name}`;
+      this.puzzleSelect!.appendChild(opt);
+    });
+    this.puzzleSelect.addEventListener('change', () => {
+      const idx = parseInt(this.puzzleSelect!.value, 10) || 0;
+      this.activePuzzleIndex = idx;
+      this.loadPuzzle(idx);
+    });
+    this.puzzleNextBtn?.addEventListener('click', () => {
+      const next = (this.activePuzzleIndex + 1) % PUZZLES.length;
+      this.activePuzzleIndex = next;
+      if (this.puzzleSelect) this.puzzleSelect.value = String(next);
+      this.loadPuzzle(next);
+    });
+    this.puzzleResetBtn?.addEventListener('click', () => {
+      this.loadPuzzle(this.activePuzzleIndex);
+    });
+  }
+
+  private loadPuzzle(index: number) {
+    const p = PUZZLES[index];
+    if (!p) return;
+    this.chess.load(p.fen);
+    this.resetMeshesToFen();
+    this.puzzleSolverColor = p.sideToMove;
+    this.puzzleGoalMoves = p.goal.moves;
+    this.puzzleSolverMovesUsed = 0;
+    this.puzzleSolved = false;
+    this.puzzleFailed = false;
+    this.updatePuzzleStatusUI();
+    // Orient camera to side to move
+    const angle = p.sideToMove === 'w' ? -Math.PI / 2 : Math.PI / 2;
+    const radius = Math.hypot(this.camera.position.x, this.camera.position.z) || 10;
+    const height = this.camera.position.y;
+    this.camera.position.x = Math.cos(angle) * radius;
+    this.camera.position.z = Math.sin(angle) * radius;
+    this.camera.position.y = height;
+    this.camera.lookAt(0, 0, 0);
+    this.updateStatus();
+    this.updatePortalMarkers();
+  }
+
+  private updatePortalMarkers() {
+    // Clear existing
+    for (const m of this.portalMarkers) this.boardGroup.remove(m);
+    this.portalMarkers = [];
+    if (this.modeManager.currentMode !== 'portal-rush') return;
+    const portals = getPortalSquares(this.modeManager);
+    if (!portals) return;
+    const mk = (square: string, color: number) => {
+      const geom = new THREE.TorusGeometry(0.4, 0.06, 12, 24);
+      const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.8, depthTest: false, depthWrite: false });
+      const mesh = new THREE.Mesh(geom, mat);
+      const pos = squareToPosition(square);
+      mesh.position.set(pos.x, 0.02, pos.z);
+      mesh.rotation.x = -Math.PI / 2;
+      mesh.renderOrder = 4;
+      this.boardGroup.add(mesh);
+      this.portalMarkers.push(mesh);
+    };
+    mk(portals.a, 0x8a2be2); // purple
+    mk(portals.b, 0x20b2aa); // teal
+  }
+
+  private checkPuzzleProgress(applied: Move) {
+    if (this.modeManager.currentMode !== 'puzzles') return;
+    if (this.puzzleSolved || this.puzzleFailed) return;
+    if (applied.color === this.puzzleSolverColor) this.puzzleSolverMovesUsed++;
+
+    if (this.chess.isCheckmate()) {
+      const deliveredBySolver = applied.color === this.puzzleSolverColor;
+      if (deliveredBySolver && this.puzzleSolverMovesUsed <= this.puzzleGoalMoves) {
+        this.puzzleSolved = true;
+        this.flashStatus('Puzzle solved!');
+      } else {
+        this.puzzleFailed = true;
+        this.flashStatus('Puzzle failed');
+      }
+      this.updatePuzzleStatusUI();
+      return;
+    }
+    if (this.puzzleSolverMovesUsed > this.puzzleGoalMoves) {
+      this.puzzleFailed = true;
+      this.flashStatus('Out of moves — puzzle failed');
+      this.updatePuzzleStatusUI();
+      return;
+    }
+    this.updatePuzzleStatusUI();
+  }
+
+  private updatePuzzleStatusUI() {
+    if (!this.puzzleGoalSpan) return;
+    const status = this.puzzleSolved ? ' — Solved!' : this.puzzleFailed ? ' — Failed' : '';
+    this.puzzleGoalSpan.textContent = `Mate in ${this.puzzleGoalMoves} • Used ${this.puzzleSolverMovesUsed}/${this.puzzleGoalMoves}${status}`;
   }
 }
 

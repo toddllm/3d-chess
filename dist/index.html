@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>3D Chess</title>
-    <script type="module" crossorigin src="/assets/index-CnmHecAL.js"></script>
+    <script type="module" crossorigin src="/assets/index-DofcciPC.js"></script>
     <link rel="stylesheet" crossorigin href="/assets/index-tBgxOG6j.css">
   </head>
   <body>
@@ -15,13 +15,22 @@
         <label class="checkbox"><input id="autoPromoteQueen" type="checkbox" checked> Auto-queen</label>
         <label class="checkbox"><input id="flipOnTurn" type="checkbox" checked> Flip on turn</label>
         <input id="serverUrlInput" class="lan-input" placeholder="ws://server:5174" title="Multiplayer server WS URL">
-        <button id="createLanBtn" title="Create a LAN game">Create LAN Game</button>
+        <select id="modeSelect" title="Game mode"></select>
+        <button id="createLanBtn" title="Create LAN game">Create LAN Game</button>
         <button id="leaveLanBtn" class="hidden" title="Leave LAN mode">Leave LAN</button>
         <span id="youAre" class="hidden role-badge"></span>
         <span id="lanShare" class="hidden lan-share">
           <input id="lanLinkInput" class="lan-input" type="text" readonly>
           <button id="copyLanLinkBtn" title="Copy link">Copy</button>
         </span>
+      </div>
+
+      <div id="puzzleBar" class="hidden" style="display:flex; gap:8px; align-items:center; margin-left:10px;">
+        <label>Puzzles:</label>
+        <select id="puzzleSelect" title="Choose a puzzle"></select>
+        <button id="puzzleResetBtn" title="Reset current puzzle">Reset</button>
+        <button id="puzzleNextBtn" title="Next puzzle">Next</button>
+        <span id="puzzleGoal" class="role-badge"></span>
       </div>
     </div>
 
@@ -38,5 +47,8 @@
     </div>
 
     <canvas id="app"></canvas>
+    <div style="position:fixed; bottom:8px; left:10px; opacity:0.8; font-size:12px;">
+      <a href="/additions/NescrosemasMixGameandChallenge.md" target="_blank">Additions: NescrosemasMixGameandChallenge</a>
+    </div>
   </body>
 </html>
