@@ -69,6 +69,10 @@ class Chess3DApp {
   private puzzleResetBtn: HTMLButtonElement | null = null;
   private puzzleAutoNextCheckbox: HTMLInputElement | null = null;
   private activePuzzleIndex: number = 0;
+  // Banner for end conditions
+  private bannerEl: HTMLElement | null = null;
+  private bannerTextEl: HTMLElement | null = null;
+  private bannerActionBtn: HTMLButtonElement | null = null;
   private puzzleSolverColor: PieceColor = 'w';
   private puzzleGoalMoves: number = 0;
   private puzzleSolverMovesUsed: number = 0;
@@ -181,6 +185,14 @@ class Chess3DApp {
     this.createLanBtn.addEventListener('click', () => this.createLanGame());
     this.leaveLanBtn.addEventListener('click', () => this.leaveLanGame());
     this.copyLanLinkBtn.addEventListener('click', () => this.copyLanLink());
+    // Banner
+    this.bannerEl = document.getElementById('banner');
+    this.bannerTextEl = document.getElementById('bannerText');
+    this.bannerActionBtn = document.getElementById('bannerActionBtn') as HTMLButtonElement | null;
+    this.bannerActionBtn?.addEventListener('click', () => {
+      this.hideBanner();
+      this.resetGame();
+    });
 
     // Promotion UI
     this.promotionModal.querySelectorAll('button[data-piece]')!.forEach((btn) => {
@@ -632,6 +644,14 @@ class Chess3DApp {
   private afterMoveUpdate() {
     this.updateStatus();
     if (!this.isLanMode) this.controlsTargetByTurn();
+    // Sudden death banner
+    if (this.modeManager.currentMode === 'sudden-death') {
+      const winner = (this.chess as any)._suddenDeathWinner as ('w'|'b') | undefined;
+      if (winner && this.bannerEl && this.bannerTextEl) {
+        this.bannerTextEl.textContent = `Sudden Death — ${winner === 'w' ? 'White' : 'Black'} wins`;
+        this.bannerEl.classList.remove('hidden');
+      }
+    }
   }
 
   private controlsTargetByTurn() {
@@ -1007,6 +1027,10 @@ class Chess3DApp {
     if (!this.puzzleGoalSpan) return;
     const status = this.puzzleSolved ? ' — Solved!' : this.puzzleFailed ? ' — Failed' : '';
     this.puzzleGoalSpan.textContent = `Mate in ${this.puzzleGoalMoves} • Used ${this.puzzleSolverMovesUsed}/${this.puzzleGoalMoves}${status}`;
+  }
+
+  private hideBanner() {
+    this.bannerEl?.classList.add('hidden');
   }
 
   private updateUrlParams(updates: Partial<{ mode: string; puzzle: string; game: string; server: string }>) {
