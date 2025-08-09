@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>3D Chess</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <div id="hud">
+      <div id="status"></div>
+      <div id="controls">
+        <button id="newGameBtn" title="Start a new game">New Game</button>
+        <label class="checkbox"><input id="autoPromoteQueen" type="checkbox" checked> Auto-queen</label>
+        <label class="checkbox"><input id="flipOnTurn" type="checkbox" checked> Flip on turn</label>
+        <input id="serverUrlInput" class="lan-input" placeholder="ws://server:5174" title="Multiplayer server WS URL">
+        <button id="createLanBtn" title="Create a LAN game">Create LAN Game</button>
+        <button id="leaveLanBtn" class="hidden" title="Leave LAN mode">Leave LAN</button>
+        <span id="youAre" class="hidden role-badge"></span>
+        <span id="lanShare" class="hidden lan-share">
+          <input id="lanLinkInput" class="lan-input" type="text" readonly>
+          <button id="copyLanLinkBtn" title="Copy link">Copy</button>
+        </span>
+      </div>
+    </div>
+
+    <div id="promotionModal" class="modal hidden">
+      <div class="modal-content">
+        <h3>Choose promotion</h3>
+        <div class="choices">
+          <button data-piece="q">Queen</button>
+          <button data-piece="r">Rook</button>
+          <button data-piece="b">Bishop</button>
+          <button data-piece="n">Knight</button>
+        </div>
+      </div>
+    </div>
+
+    <canvas id="app"></canvas>
+    <div style="position:fixed; bottom:8px; left:10px; opacity:0.8; font-size:12px;">
+      <a href="/additions/NescrosemasMixGameandChallenge.md" target="_blank">Additions: NescrosemasMixGameandChallenge</a>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
