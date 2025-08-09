@@ -3,7 +3,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { Chess, Move } from 'chess.js';
 import { createBoard, squareToPosition, positionToSquare, BoardSquare, SQUARE_SIZE } from './board';
 import { createPieceMesh, PieceColor, PieceType } from './pieces';
-import { ModeManager, MODES, ModeId, getPortalSquares, consumeLastTeleport } from './modes';
+import { ModeManager, MODES, ModeId, getPortalSquares, consumeLastTeleport, getPortalRerollInfo } from './modes';
 import { PUZZLES } from './puzzles';
 import { TextGeometry } from 'three/examples/jsm/geometries/TextGeometry.js';
 import { Font } from 'three/examples/jsm/loaders/FontLoader.js';
@@ -202,9 +202,24 @@ class Chess3DApp {
     const mode = params.get('mode');
     const game = params.get('game');
     const serverParam = params.get('server');
+    const puzzleParam = params.get('puzzle');
     if (serverParam) this.serverUrlInput.value = decodeURIComponent(serverParam);
     if (mode === 'lan' && game) {
       this.joinLanGame(game);
+    }
+    if (mode && this.modeSelect) {
+      const id = (mode as ModeId);
+      if ([...this.modeSelect.options].some(o => o.value === id)) {
+        this.modeSelect.value = id;
+        this.modeManager.init(id);
+        if (id === 'puzzles') {
+          if (puzzleParam) this.activePuzzleIndex = Math.max(0, Math.min(PUZZLES.length - 1, parseInt(puzzleParam, 10) || 0));
+          this.puzzleBar?.classList.remove('hidden');
+          this.injectPuzzleUI();
+          if (this.puzzleSelect) this.puzzleSelect.value = String(this.activePuzzleIndex);
+          this.loadPuzzle(this.activePuzzleIndex);
+        }
+      }
     }
   }
 
@@ -652,6 +667,10 @@ class Chess3DApp {
     if (this.isLanMode) msg += `  •  LAN (${this.myColor === 'w' ? 'White' : 'Black'})`;
     const extra = this.modeManager.getStatusExtra();
     if (extra) msg += `  •  ${extra}`;
+    if (this.modeManager.currentMode === 'portal-rush') {
+      const info = getPortalRerollInfo(this.modeManager);
+      if (info) msg += `  •  Reroll in ${info.remainingPlies} plies`;
+    }
     this.statusEl.textContent = msg;
   }
 
@@ -866,6 +885,7 @@ class Chess3DApp {
         this.puzzleBar?.classList.add('hidden');
       }
       this.updatePortalMarkers();
+      this.updateUrlParams({ mode: id });
     });
   }
 
@@ -887,12 +907,14 @@ class Chess3DApp {
       const idx = parseInt(this.puzzleSelect!.value, 10) || 0;
       this.activePuzzleIndex = idx;
       this.loadPuzzle(idx);
+      this.updateUrlParams({ puzzle: String(idx) });
     });
     this.puzzleNextBtn?.addEventListener('click', () => {
       const next = (this.activePuzzleIndex + 1) % PUZZLES.length;
       this.activePuzzleIndex = next;
       if (this.puzzleSelect) this.puzzleSelect.value = String(next);
       this.loadPuzzle(next);
+      this.updateUrlParams({ puzzle: String(next) });
     });
     this.puzzleResetBtn?.addEventListener('click', () => {
       this.loadPuzzle(this.activePuzzleIndex);
@@ -974,6 +996,18 @@ class Chess3DApp {
     if (!this.puzzleGoalSpan) return;
     const status = this.puzzleSolved ? ' — Solved!' : this.puzzleFailed ? ' — Failed' : '';
     this.puzzleGoalSpan.textContent = `Mate in ${this.puzzleGoalMoves} • Used ${this.puzzleSolverMovesUsed}/${this.puzzleGoalMoves}${status}`;
+  }
+
+  private updateUrlParams(updates: Partial<{ mode: string; puzzle: string; game: string; server: string }>) {
+    const url = new URL(window.location.href);
+    const params = url.searchParams;
+    for (const [k, v] of Object.entries(updates)) {
+      if (v == null || v === '') params.delete(k);
+      else params.set(k, v);
+    }
+    // Preserve server param if in LAN mode
+    if (this.isLanMode && this.serverUrlInput?.value) params.set('server', this.serverUrlInput.value);
+    window.history.replaceState({}, '', `${url.pathname}?${params.toString()}`);
   }
 
   private addCoordinateLabels() {

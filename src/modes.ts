@@ -170,3 +170,12 @@ export function consumeLastTeleport(manager: ModeManager): { from: string; to: s
   anyMgr._lastTeleport = null;
   return tp;
 }
+
+export function getPortalRerollInfo(manager: ModeManager): { remainingPlies: number; intervalPlies: number } | null {
+  const anyMgr: any = manager as any;
+  if (anyMgr.currentMode !== 'portal-rush') return null;
+  const used = anyMgr.pliesSincePortal ?? 0;
+  const interval = 6;
+  const remaining = Math.max(0, interval - used);
+  return { remainingPlies: remaining, intervalPlies: interval };
+}
