@@ -13,6 +13,7 @@ const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
 const distDir = path.join(__dirname, 'dist');
 const additionsDir = path.join(__dirname, 'additions');
 const miniGamesDir = path.join(__dirname, 'src', 'minigames');
+const pythonGamesDir = path.join(__dirname, 'python_games');
 
 // In-memory game rooms
 const rooms = new Map(); // gameId -> { clients: Set<ws>, colorByClient: Map<ws,'w'|'b'>, fen: string }
@@ -28,8 +29,10 @@ const server = http.createServer(async (req, res) => {
     if (parsed.pathname === '/api/minigames/list') {
       try {
         await mkdir(miniGamesDir, { recursive: true });
-        const files = (await readdir(miniGamesDir)).filter(f => f.endsWith('.ts'));
-        return json(res, { ok: true, files });
+        await mkdir(pythonGamesDir, { recursive: true });
+        const ts = (await readdir(miniGamesDir)).filter(f => f.endsWith('.ts'));
+        const py = (await readdir(pythonGamesDir)).filter(f => f.endsWith('.py'));
+        return json(res, { ok: true, ts, py });
       } catch (e) {
         return json(res, { ok: false, error: String(e) }, 500);
       }
@@ -45,10 +48,17 @@ const server = http.createServer(async (req, res) => {
         const template = String(body?.template || 'mode');
         const model = process.env.OLLAMA_MODEL || 'gpt-oss:120b';
         const baseUrl = process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434';
-        await mkdir(miniGamesDir, { recursive: true });
-        const targetBase = await ensureUniqueTsFilename(path.join(miniGamesDir, `${name}.ts`));
-        const result = await generateWithRetries({ baseUrl, model, template, spec, targetBase, cwd: __dirname, maxAttempts: 3 });
-        return json(res, result, result.ok ? 200 : 422);
+        if (template === 'python') {
+          await mkdir(pythonGamesDir, { recursive: true });
+          const targetBase = await ensureUniquePyFilename(path.join(pythonGamesDir, `${name}.py`));
+          const result = await generatePythonWithRetries({ baseUrl, model, spec, targetBase, maxAttempts: 3 });
+          return json(res, result, result.ok ? 200 : 422);
+        } else {
+          await mkdir(miniGamesDir, { recursive: true });
+          const targetBase = await ensureUniqueTsFilename(path.join(miniGamesDir, `${name}.ts`));
+          const result = await generateWithRetries({ baseUrl, model, template, spec, targetBase, cwd: __dirname, maxAttempts: 3 });
+          return json(res, result, result.ok ? 200 : 422);
+        }
       } catch (e) {
         return json(res, { ok: false, error: String(e) }, 500);
       }
@@ -58,10 +68,18 @@ const server = http.createServer(async (req, res) => {
       const file = parsed.searchParams.get('file');
       if (!file) return json(res, { ok: false, error: 'file query param required' }, 400);
       try {
-        const full = path.join(miniGamesDir, file);
-        const content = await readFile(full, 'utf-8');
-        const qa = quickQA(content);
-        return json(res, { ok: qa.ok, details: qa });
+        if (file.endsWith('.ts')) {
+          const full = path.join(miniGamesDir, file);
+          const content = await readFile(full, 'utf-8');
+          const qa = quickQA(content);
+          return json(res, { ok: qa.ok, details: qa });
+        } else if (file.endsWith('.py')) {
+          const full = path.join(pythonGamesDir, file);
+          const qa = await runPythonQA(full);
+          return json(res, qa, qa.ok ? 200 : 422);
+        } else {
+          return json(res, { ok: false, error: 'unsupported file type' }, 400);
+        }
       } catch (e) {
         return json(res, { ok: false, error: String(e) }, 404);
       }
@@ -279,6 +297,20 @@ async function ensureUniqueTsFilename(basePath) {
   return p;
 }
 
+async function ensureUniquePyFilename(basePath) {
+  let p = basePath;
+  let i = 1;
+  const dir = path.dirname(basePath);
+  const base = path.basename(basePath, '.py');
+  const ext = '.py';
+  const existing = new Set(await readdir(dir));
+  while (existing.has(path.basename(p))) {
+    p = path.join(dir, `${base}-${i}${ext}`);
+    i++;
+  }
+  return p;
+}
+
 function extractCode(raw) {
   if (!raw) return '';
   // If the model wrapped with ``` blocks, strip them
@@ -298,6 +330,58 @@ function quickQA(code) {
     result.issues.push('missing-getStatusExtra');
   }
   return result;
+}
+
+async function generatePythonWithRetries({ baseUrl, model, spec, targetBase, maxAttempts = 3 }) {
+  let last = { ok: false, details: null };
+  let filename = targetBase;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const prompt = buildPythonGamePrompt(spec);
+    const raw = await ollamaGenerate(baseUrl, model, prompt);
+    const code = extractCode(raw);
+    const qa = pythonQuickQA(code);
+    if (!qa.ok) { last = { ok: false, details: { attempt, qa } }; continue; }
+    filename = await ensureUniquePyFilename(targetBase);
+    await writeFile(filename, code, 'utf-8');
+    const run = await runPythonQA(filename);
+    if (run.ok) {
+      return { ok: true, file: `/python_games/${path.basename(filename)}`, usedName: path.basename(filename), test: run };
+    }
+    last = { ok: false, details: { attempt, run } };
+  }
+  return { ok: false, error: 'python-generation-failed', ...last };
+}
+
+function buildPythonGamePrompt(spec) {
+  return (
+`You are generating a standalone Python 3 mini-game script.
+Output ONLY code, no backticks. Requirements:
+- The script must be executable with: python3 file.py --selftest
+- When run with --selftest it returns exit code 0 on success and prints a short line with 'OK'.
+- No external pip deps. Use only Python standard library.
+- Implement a simple text-based mini-game logic described by this spec:
+${spec}
+`);
+}
+
+function pythonQuickQA(code) {
+  const result = { ok: true, issues: [] };
+  if (!code || code.length < 20) { result.ok = false; result.issues.push('too-short'); }
+  if (!/--selftest/.test(code)) { result.ok = false; result.issues.push('missing-selftest-arg'); }
+  return result;
+}
+
+async function runPythonQA(filePath) {
+  return new Promise((resolve) => {
+    const py = spawn('python3', [filePath, '--selftest']);
+    let out = '';
+    let err = '';
+    py.stdout.on('data', d => out += d.toString());
+    py.stderr.on('data', d => err += d.toString());
+    py.on('close', (code) => {
+      resolve({ ok: code === 0 && /OK/i.test(out), code, stdout: out, stderr: err });
+    });
+  });
 }
 
 async function generateWithRetries({ baseUrl, model, template, spec, targetBase, cwd, maxAttempts = 3 }) {
