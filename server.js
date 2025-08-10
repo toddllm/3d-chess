@@ -345,7 +345,8 @@ async function generatePythonWithRetries({ baseUrl, model, spec, targetBase, max
     await writeFile(filename, code, 'utf-8');
     const run = await runPythonQA(filename);
     if (run.ok) {
-      return { ok: true, file: `/python_games/${path.basename(filename)}`, usedName: path.basename(filename), test: run };
+      const backup = await maybeBackupConflictingTs(filename);
+      return { ok: true, file: `/python_games/${path.basename(filename)}`, usedName: path.basename(filename), test: run, backup };
     }
     last = { ok: false, details: { attempt, run } };
   }
@@ -382,6 +383,27 @@ async function runPythonQA(filePath) {
       resolve({ ok: code === 0 && /OK/i.test(out), code, stdout: out, stderr: err });
     });
   });
+}
+
+async function maybeBackupConflictingTs(pyFilePath) {
+  // If a TS file with the same stem exists and looks like accidental Python/fenced code, rename it with .bak
+  try {
+    const stem = path.basename(pyFilePath, '.py');
+    const tsPath = path.join(miniGamesDir, `${stem}.ts`);
+    const content = await readFile(tsPath, 'utf-8').catch(() => null);
+    if (!content) return null;
+    const looksPython = content.startsWith('```') || content.startsWith('#!') || /import\s+argparse/.test(content);
+    if (looksPython) {
+      const bak = path.join(miniGamesDir, `${stem}.ts.bak_${Date.now()}`);
+      await writeFile(bak, content, 'utf-8');
+      // Overwrite original with a comment pointing to backup
+      await writeFile(tsPath, `// Backed up to ${path.basename(bak)} — contained non-TS content.\n`, 'utf-8');
+      return { moved: path.basename(bak) };
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 async function generateWithRetries({ baseUrl, model, template, spec, targetBase, cwd, maxAttempts = 3 }) {
