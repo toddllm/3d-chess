@@ -38,21 +38,39 @@ const server = http.createServer(async (req, res) => {
     if (parsed.pathname === '/api/minigames/generate' && req.method === 'POST') {
       try {
         const body = await readJson(req);
-        const name = sanitizeName(body?.name || 'new-minigame');
+        if (!body || typeof body !== 'object') return json(res, { ok: false, error: 'Invalid JSON body' }, 400);
+        const requestedName = typeof body.name === 'string' ? body.name : '';
+        const name = sanitizeName(requestedName) || `autogen-${Date.now()}`;
         const spec = String(body?.spec || 'Create a simple Portal Rush variant.');
         const template = String(body?.template || 'mode');
         const model = process.env.OLLAMA_MODEL || 'gpt-oss:120b';
         const baseUrl = process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434';
         await mkdir(miniGamesDir, { recursive: true });
-        const targetFile = path.join(miniGamesDir, `${name}.ts`);
+        const targetFile = await ensureUniqueTsFilename(path.join(miniGamesDir, `${name}.ts`));
         const prompt = buildMiniGamePrompt(template, spec);
-        const code = await ollamaGenerate(baseUrl, model, prompt);
-        if (!code || code.trim().length === 0) return json(res, { ok: false, error: 'Empty generation from model' }, 500);
+        const raw = await ollamaGenerate(baseUrl, model, prompt);
+        const code = extractCode(raw);
+        const qa = quickQA(code);
+        if (!qa.ok) return json(res, { ok: false, error: 'QA failed', details: qa }, 422);
         await writeFile(targetFile, code, 'utf-8');
         const buildResult = await runBuild(__dirname);
-        return json(res, { ok: true, file: `/src/minigames/${name}.ts`, build: buildResult });
+        const usedName = path.basename(targetFile);
+        return json(res, { ok: true, file: `/src/minigames/${usedName}`, usedName, requestedName, build: buildResult });
       } catch (e) {
         return json(res, { ok: false, error: String(e) }, 500);
+      }
+    }
+    // API: QA existing minigame
+    if (parsed.pathname === '/api/minigames/qa') {
+      const file = parsed.searchParams.get('file');
+      if (!file) return json(res, { ok: false, error: 'file query param required' }, 400);
+      try {
+        const full = path.join(miniGamesDir, file);
+        const content = await readFile(full, 'utf-8');
+        const qa = quickQA(content);
+        return json(res, { ok: qa.ok, details: qa });
+      } catch (e) {
+        return json(res, { ok: false, error: String(e) }, 404);
       }
     }
     // Serve additions from /additions/* if present
@@ -252,4 +270,39 @@ function runBuild(cwd) {
       resolve({ success: code === 0, code, stdout: out, stderr: err });
     });
   });
+}
+
+async function ensureUniqueTsFilename(basePath) {
+  let p = basePath;
+  let i = 1;
+  const dir = path.dirname(basePath);
+  const base = path.basename(basePath, '.ts');
+  const ext = '.ts';
+  const existing = new Set(await readdir(dir));
+  while (existing.has(path.basename(p))) {
+    p = path.join(dir, `${base}-${i}${ext}`);
+    i++;
+  }
+  return p;
+}
+
+function extractCode(raw) {
+  if (!raw) return '';
+  // If the model wrapped with ``` blocks, strip them
+  const triple = /```[a-zA-Z]*[\r\n]+([\s\S]*?)```/m;
+  const m = raw.match(triple);
+  return (m ? m[1] : raw).trim();
+}
+
+function quickQA(code) {
+  const result = { ok: true, issues: [] };
+  if (!code || code.length < 20) { result.ok = false; result.issues.push('too-short'); }
+  if (!/export\s+function\s+createModeRuntime\s*\(/.test(code)) {
+    result.ok = false; result.issues.push('missing-createModeRuntime');
+  }
+  // Check it returns an object with getStatusExtra at least
+  if (!/getStatusExtra\s*\(\)/.test(code)) {
+    result.issues.push('missing-getStatusExtra');
+  }
+  return result;
 }
