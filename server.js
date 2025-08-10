@@ -14,6 +14,7 @@ const distDir = path.join(__dirname, 'dist');
 const additionsDir = path.join(__dirname, 'additions');
 const miniGamesDir = path.join(__dirname, 'src', 'minigames');
 const pythonGamesDir = path.join(__dirname, 'python_games');
+const adminDir = path.join(__dirname, 'admin');
 
 // In-memory game rooms
 const rooms = new Map(); // gameId -> { clients: Set<ws>, colorByClient: Map<ws,'w'|'b'>, fen: string }
@@ -21,6 +22,23 @@ const rooms = new Map(); // gameId -> { clients: Set<ws>, colorByClient: Map<ws,
 const server = http.createServer(async (req, res) => {
   try {
     const parsed = new URL(req.url, `http://${req.headers.host}`);
+    // Serve admin UI files under /admin
+    if (parsed.pathname === '/admin' || parsed.pathname.startsWith('/admin/')) {
+      const rel = parsed.pathname === '/admin' ? '/index.html' : parsed.pathname.replace('/admin', '');
+      const filePath = path.join(adminDir, rel);
+      if (!filePath.startsWith(adminDir)) { res.writeHead(403); res.end('Forbidden'); return; }
+      try {
+        const content = await readFile(filePath);
+        const ext = path.extname(filePath).toLowerCase();
+        const type = ext === '.html' ? 'text/html' : ext === '.js' ? 'application/javascript' : ext === '.css' ? 'text/css' : 'application/octet-stream';
+        res.writeHead(200, { 'Content-Type': type });
+        res.end(content);
+        return;
+      } catch {
+        res.writeHead(404); res.end('Not found'); return;
+      }
+    }
+
     // API: health
     if (parsed.pathname === '/api/minigames/ping') {
       return json(res, { ok: true, message: 'minigames api online' });

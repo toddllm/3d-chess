@@ -1,0 +1,53 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Mini-game Generator (Local)</title>
+    <link rel="stylesheet" href="/admin/style.css" />
+  </head>
+  <body>
+    <div class="container">
+      <h1>Mini-game Generator (Local)</h1>
+      <p class="hint">This UI runs entirely against your local server. No external calls.</p>
+
+      <section class="panel">
+        <h2>Generate</h2>
+        <label>
+          Name
+          <input id="name" placeholder="my-mini">
+        </label>
+        <label>
+          Template
+          <select id="template">
+            <option value="python">Python (selftest)</option>
+            <option value="mode">TypeScript (TS Mode)</option>
+          </select>
+        </label>
+        <label>
+          Spec
+          <textarea id="spec" rows="8" placeholder="Describe the mini-game here..."></textarea>
+        </label>
+        <button id="generateBtn">Generate</button>
+        <pre id="genResult" class="log"></pre>
+      </section>
+
+      <section class="panel">
+        <h2>List & QA</h2>
+        <button id="refreshBtn">Refresh</button>
+        <div class="lists">
+          <div>
+            <h3>Python</h3>
+            <ul id="pyList"></ul>
+          </div>
+          <div>
+            <h3>TypeScript</h3>
+            <ul id="tsList"></ul>
+          </div>
+        </div>
+        <pre id="qaResult" class="log"></pre>
+      </section>
+    </div>
+    <script src="/admin/main.js" type="module"></script>
+  </body>
+</html>
