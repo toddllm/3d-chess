@@ -3,14 +3,16 @@
 
 import http from 'http';
 import { WebSocketServer } from 'ws';
-import { readFile } from 'fs/promises';
+import { readFile, writeFile, mkdir, readdir } from 'fs/promises';
 import path from 'path';
 import url from 'url';
 import os from 'os';
+import { spawn } from 'child_process';
 
 const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
 const distDir = path.join(__dirname, 'dist');
 const additionsDir = path.join(__dirname, 'additions');
+const miniGamesDir = path.join(__dirname, 'src', 'minigames');
 
 // In-memory game rooms
 const rooms = new Map(); // gameId -> { clients: Set<ws>, colorByClient: Map<ws,'w'|'b'>, fen: string }
@@ -18,6 +20,41 @@ const rooms = new Map(); // gameId -> { clients: Set<ws>, colorByClient: Map<ws,
 const server = http.createServer(async (req, res) => {
   try {
     const parsed = new URL(req.url, `http://${req.headers.host}`);
+    // API: health
+    if (parsed.pathname === '/api/minigames/ping') {
+      return json(res, { ok: true, message: 'minigames api online' });
+    }
+    // API: list minigames
+    if (parsed.pathname === '/api/minigames/list') {
+      try {
+        await mkdir(miniGamesDir, { recursive: true });
+        const files = (await readdir(miniGamesDir)).filter(f => f.endsWith('.ts'));
+        return json(res, { ok: true, files });
+      } catch (e) {
+        return json(res, { ok: false, error: String(e) }, 500);
+      }
+    }
+    // API: generate new minigame via Ollama
+    if (parsed.pathname === '/api/minigames/generate' && req.method === 'POST') {
+      try {
+        const body = await readJson(req);
+        const name = sanitizeName(body?.name || 'new-minigame');
+        const spec = String(body?.spec || 'Create a simple Portal Rush variant.');
+        const template = String(body?.template || 'mode');
+        const model = process.env.OLLAMA_MODEL || 'gpt-oss:120b';
+        const baseUrl = process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434';
+        await mkdir(miniGamesDir, { recursive: true });
+        const targetFile = path.join(miniGamesDir, `${name}.ts`);
+        const prompt = buildMiniGamePrompt(template, spec);
+        const code = await ollamaGenerate(baseUrl, model, prompt);
+        if (!code || code.trim().length === 0) return json(res, { ok: false, error: 'Empty generation from model' }, 500);
+        await writeFile(targetFile, code, 'utf-8');
+        const buildResult = await runBuild(__dirname);
+        return json(res, { ok: true, file: `/src/minigames/${name}.ts`, build: buildResult });
+      } catch (e) {
+        return json(res, { ok: false, error: String(e) }, 500);
+      }
+    }
     // Serve additions from /additions/* if present
     if (parsed.pathname.startsWith('/additions/')) {
       const addPath = parsed.pathname.replace('/additions/', '');
@@ -164,4 +201,55 @@ function detectLanIPv4() {
     }
   }
   return null;
+}
+
+function json(res, obj, code = 200) {
+  res.writeHead(code, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify(obj));
+}
+
+async function readJson(req) {
+  const chunks = [];
+  for await (const ch of req) chunks.push(ch);
+  const raw = Buffer.concat(chunks).toString('utf-8');
+  if (!raw) return {};
+  return JSON.parse(raw);
+}
+
+function sanitizeName(n) {
+  return String(n).toLowerCase().replace(/[^a-z0-9\-_.]/g, '-').slice(0, 64);
+}
+
+function buildMiniGamePrompt(template, spec) {
+  if (template === 'mode') {
+    return (
+`You are generating a TypeScript module for a chess mini-game mode in a Three.js browser app.
+Output ONLY the code for a single TypeScript file, no backticks.\n\nConstraints:\n- The file must export a function createModeRuntime(): { onReset?(chess: any): void; beforeMove?(chess: any, move: {from:string; to:string; promotion?: 'q'|'r'|'b'|'n'}): void; afterAppliedMove?(chess: any, applied: any): void; getStatusExtra?(): string | null; dispose?(): void }\n- No external imports besides things available in the app's codebase (no Node imports). You may rely on the chess.js API via the chess argument.\n- Keep it self-contained; no side effects except returning handlers.\n\nImplement a fun, lightweight mini-game mode according to this spec:\n${spec}\n`
+    );
+  }
+  return `Generate a TypeScript module for this chess mini-game concept. Output only code. Spec: ${spec}`;
+}
+
+async function ollamaGenerate(baseUrl, model, prompt) {
+  const resp = await fetch(`${baseUrl}/api/generate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model, prompt, stream: false }),
+  });
+  if (!resp.ok) throw new Error(`ollama http ${resp.status}`);
+  const data = await resp.json();
+  return data.response || '';
+}
+
+function runBuild(cwd) {
+  return new Promise((resolve) => {
+    const child = spawn('npm', ['run', 'build'], { cwd, shell: true });
+    let out = '';
+    let err = '';
+    child.stdout.on('data', (d) => (out += d.toString()));
+    child.stderr.on('data', (d) => (err += d.toString()));
+    child.on('close', (code) => {
+      resolve({ success: code === 0, code, stdout: out, stderr: err });
+    });
+  });
 }
