@@ -46,16 +46,9 @@ const server = http.createServer(async (req, res) => {
         const model = process.env.OLLAMA_MODEL || 'gpt-oss:120b';
         const baseUrl = process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434';
         await mkdir(miniGamesDir, { recursive: true });
-        const targetFile = await ensureUniqueTsFilename(path.join(miniGamesDir, `${name}.ts`));
-        const prompt = buildMiniGamePrompt(template, spec);
-        const raw = await ollamaGenerate(baseUrl, model, prompt);
-        const code = extractCode(raw);
-        const qa = quickQA(code);
-        if (!qa.ok) return json(res, { ok: false, error: 'QA failed', details: qa }, 422);
-        await writeFile(targetFile, code, 'utf-8');
-        const buildResult = await runBuild(__dirname);
-        const usedName = path.basename(targetFile);
-        return json(res, { ok: true, file: `/src/minigames/${usedName}`, usedName, requestedName, build: buildResult });
+        const targetBase = await ensureUniqueTsFilename(path.join(miniGamesDir, `${name}.ts`));
+        const result = await generateWithRetries({ baseUrl, model, template, spec, targetBase, cwd: __dirname, maxAttempts: 3 });
+        return json(res, result, result.ok ? 200 : 422);
       } catch (e) {
         return json(res, { ok: false, error: String(e) }, 500);
       }
@@ -305,4 +298,28 @@ function quickQA(code) {
     result.issues.push('missing-getStatusExtra');
   }
   return result;
+}
+
+async function generateWithRetries({ baseUrl, model, template, spec, targetBase, cwd, maxAttempts = 3 }) {
+  let last = { ok: false, details: null };
+  let filename = targetBase;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const prompt = buildMiniGamePrompt(template, spec);
+    const raw = await ollamaGenerate(baseUrl, model, prompt);
+    const code = extractCode(raw);
+    const qa = quickQA(code);
+    if (!qa.ok) {
+      last = { ok: false, details: { attempt, qa } };
+      continue;
+    }
+    // If model embedded a different name in code, we still use our targetBase; ensure unique
+    filename = await ensureUniqueTsFilename(targetBase);
+    await writeFile(filename, code, 'utf-8');
+    const build = await runBuild(cwd);
+    if (build.success) {
+      return { ok: true, file: `/src/minigames/${path.basename(filename)}`, usedName: path.basename(filename), build };
+    }
+    last = { ok: false, details: { attempt, build } };
+  }
+  return { ok: false, error: 'generation-failed', ...last };
 }
