@@ -20,9 +20,10 @@ EOS
 
 JSON=$(jq -nc --arg name "$NAME" --arg spec "$SPEC" '{name:$name, template:"python", spec:$spec}')
 
-curl -sS -X POST "$HOST/api/minigames/generate" \
+GEN_RESP=$(curl -sS -H 'Accept: application/json' -X POST "$HOST/api/minigames/generate" \
   -H 'Content-Type: application/json' \
-  -d "$JSON" | tee /tmp/minigen.json
+  -d "$JSON")
+printf '%s' "$GEN_RESP" | tee /tmp/minigen.json >/dev/null
 
 USED=$(jq -r '.usedName // (.file|split("/")[-1])' /tmp/minigen.json)
 if [[ "$USED" == "null" || -z "$USED" ]]; then
@@ -30,10 +31,22 @@ if [[ "$USED" == "null" || -z "$USED" ]]; then
   exit 1
 fi
 
+case "$USED" in
+  *.py) : ;; 
+  *) echo "Expected a .py file, got: $USED (server may be running old build or template ignored)" >&2; exit 4;;
+esac
+
 echo "Generated: $USED"
 
 # Run QA endpoint for the generated file
-curl -sS "$HOST/api/minigames/qa?file=$USED" | tee /tmp/minigen_qa.json
+QA_RESP=$(curl -sS -H 'Accept: application/json' "$HOST/api/minigames/qa?file=$USED")
+FIRST_CHAR=$(printf '%s' "$QA_RESP" | head -c 1 || true)
+if [[ "$FIRST_CHAR" != '{' ]]; then
+  echo "QA endpoint did not return JSON. Is the server restarted?" >&2
+  echo "$QA_RESP" >&2
+  exit 5
+fi
+printf '%s' "$QA_RESP" | tee /tmp/minigen_qa.json >/dev/null
 OK=$(jq -r '.ok' /tmp/minigen_qa.json)
 if [[ "$OK" != "true" ]]; then
   echo "QA failed" >&2
